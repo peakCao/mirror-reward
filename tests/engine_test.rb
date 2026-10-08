@@ -273,6 +273,28 @@ cases.merge!({
   'coin text outside the dialog does not override membership claim' => [sequence_check(source, [reward_frame + [['领取会员福利', 0.3, 0.56, 0.4, 0.04], ['金币商城', 0.3, 0.05, 0.4, 0.03]], done_frame], [[172, 416.38]]), 0]
 })
 
+# Paid membership ad: benefit badges belong to the product, not reward entry buttons.
+paid_ad_frame = [
+  ['广告', 0.06, 0.925, 0.08, 0.02],
+  ['汽水音乐会员', 0.1, 0.70, 0.8, 0.08],
+  ['汽水音乐 SVIP 连续包年', 0.29, 0.225, 0.4, 0.02],
+  ['免广告 全景声 音效 铃声', 0.30, 0.202, 0.35, 0.015],
+  ['到期自动续费158元/年', 0.1, 0.15, 0.75, 0.02],
+  ['立即购买', 0.4, 0.07, 0.2, 0.025]
+]
+high_countdown = [['22 秒后可领奖励×', 0.7, 0.93, 0.25, 0.02]]
+high_success = [['领取成功×', 0.7, 0.93, 0.25, 0.02]]
+cases.merge!({
+  'paid ad waits for high countdown and only closes after success' => [sequence_check(source, [paid_ad_frame + high_countdown] * 2 + [paid_ad_frame + high_success, reward_frame], [[304, 45.84]], completed: 1), 0],
+  'paid ad tolerates missing countdown digits without clicking badges' => [sequence_check(source, [paid_ad_frame + [['秒 后 可 领 奖 励×', 0.7, 0.86, 0.25, 0.02]]] * 7 + [paid_ad_frame + success_frame, reward_frame], [[304, 95.5]], completed: 1), 0],
+  'paid ad never clicks badges when countdown OCR is absent' => [sequence_check(source, [paid_ad_frame] * 6, []), 0],
+  'paid offer never treats unlock or video sales copy as reward entry' => [sequence_check(source, [paid_ad_frame + [['立即解锁', 0.3, 0.4, 0.4, 0.03], ['看视频了解会员', 0.3, 0.3, 0.4, 0.03]]] * 6, []), 0],
+  'bare ad-free benefit is not an entry button' => [sequence_check(source, [[['免广告', 0.3, 0.2, 0.4, 0.03]]] * 6, []), 0],
+  'explicit video reward entry remains actionable' => [sequence_check(source, [[['看视频免广告', 0.3, 0.2, 0.4, 0.03]], done_frame], [[172, 599.74]]), 0]
+})
+
+cases.select! { |name, _| name.match?(Regexp.new(ENV['TEST_FILTER'])) } if ENV['TEST_FILTER']
+
 failed = 0
 launcher = File.read(File.join(__dir__, '../scripts/start.sh'))
 count_assignment = launcher.lines.find { |line| line.start_with?('COUNT=') }

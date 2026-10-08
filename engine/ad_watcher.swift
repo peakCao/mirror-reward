@@ -199,6 +199,7 @@ while completedAds < maxAds && !watcherControl.isStopped {
     }
     failedFrames = 0
     let allText = items.map { $0.text }.joined(separator: " ")
+    let compactAllText = allText.filter { !$0.isWhitespace }
 
     // 0. 锁屏休眠唤醒
     if allText.contains("点击即可使用") || allText.contains("使用 iPhone") || allText.contains("轻点即可使用") {
@@ -225,9 +226,11 @@ while completedAds < maxAds && !watcherControl.isStopped {
 
     // 保留奖励倒计时，直播间不一定继续显示它；不采纳商品促销计时。
     let now = ProcessInfo.processInfo.systemUptime
+    // 不同镜像布局的奖励胶囊高度不同，顶部状态栏不作为奖励控件。
+    let adHeaderItems = items.filter { $0.box.minY > 0.65 && $0.box.maxY < 0.97 }
     var remainingSeconds: Int? = nil
-    for item in items where item.box.origin.y > 0.65 && item.box.origin.y < 0.90 {
-        let t = item.text
+    for item in adHeaderItems {
+        let t = item.text.filter { !$0.isWhitespace }
         if (t.contains("奖励") || t.contains("可领") || t.contains("跳过")),
            let range = t.range(of: "[0-9]{1,3}\\s*(?:秒|[sS])", options: .regularExpression),
            let sec = Int(t[range].filter { $0.isNumber }), sec < 120 {
@@ -242,7 +245,7 @@ while completedAds < maxAds && !watcherControl.isStopped {
     } && items.contains {
         $0.box.origin.y < 0.15 && ($0.text.contains("说点什么") || $0.text.contains("说点啥") || $0.text.contains("聊点什么"))
     }
-    let hasCountdown = allText.contains("秒后") || (allText.contains("秒") && (allText.contains("可领") || allText.contains("后")))
+    let hasCountdown = compactAllText.contains("秒后") || (compactAllText.contains("秒") && (compactAllText.contains("可领") || compactAllText.contains("后")))
     let rewardItem = items.first { $0.text.filter { !$0.isWhitespace } == "领取奖励" }
     let interactionItem = items.first { $0.text.filter { !$0.isWhitespace } == "继续互动" }
     let exitItem = items.first { $0.text.filter { !$0.isWhitespace } == "坚持退出" }
@@ -253,8 +256,7 @@ while completedAds < maxAds && !watcherControl.isStopped {
     let isCoinOffer = (rewardItem != nil || interactionItem != nil || exitItem != nil) &&
         (dialogText.contains("金币") || (!hasMembershipBenefit(dialogText) &&
             dialogText.range(of: "再看[0-9一二三四五六七八九十]+个视频提前得", options: .regularExpression) != nil))
-    let hasAdResult = items.contains {
-        $0.box.origin.y > 0.65 && $0.box.origin.y < 0.90 &&
+    let hasAdResult = adHeaderItems.contains {
         ($0.text.contains("领取成功") || $0.text.contains("已成功") || ($0.text.contains("跳过") && !hasCountdown))
     }
     let hasRewardReceipt = items.contains {
@@ -345,8 +347,8 @@ while completedAds < maxAds && !watcherControl.isStopped {
     }
 
     // 3. 领奖弹窗可直达下一条；确认结束后清除 pending，避免重复计数。
-    let hasCompletedRewardPrompt = allText.contains("坚持退出") && rewardItem != nil && !hasCountdown && items.contains {
-        $0.box.origin.y > 0.65 && $0.box.origin.y < 0.90 && ($0.text.contains("领取成功") || $0.text.contains("已成功"))
+    let hasCompletedRewardPrompt = allText.contains("坚持退出") && rewardItem != nil && !hasCountdown && adHeaderItems.contains {
+        $0.text.contains("领取成功") || $0.text.contains("已成功")
     }
     let hasCloseKeywords = allText.contains("领取成功") || allText.contains("已成功") || allText.contains("坚持退出") || allText.contains("放弃奖励")
     if pendingAdCompletion && ((hasRewardReceipt && !hasCloseKeywords) || (!returningToMembership && hasCompletedRewardPrompt)) {
@@ -397,9 +399,9 @@ while completedAds < maxAds && !watcherControl.isStopped {
     var closePoint: CGPoint? = nil
     var closeType = ""
 
-    for item in items {
+    for item in adHeaderItems {
         let t = item.text
-        if item.box.origin.y > 0.65 && item.box.origin.y < 0.90 {
+        if !hasCountdown {
             if t.contains("跳过") && !hasCountdown {
                 let cx = win.bounds.origin.x + (item.box.origin.x + item.box.size.width / 2.0) * win.bounds.width
                 let cy = win.bounds.origin.y + (1.0 - (item.box.origin.y + item.box.size.height / 2.0)) * win.bounds.height
@@ -435,13 +437,13 @@ while completedAds < maxAds && !watcherControl.isStopped {
     }
 
     // 6. 倒计时智能休眠 (排除顶部 5G/时间等状态栏)
-    if let sec = remainingSeconds {
+    if remainingSeconds != nil || hasCountdown {
         closeRetryCount = 0
         rewardRetryCount = 0
         interactionRetryCount = 0
         continueRetryCount = 0
         triggerRetryCount = 0
-        if sec > 4 {
+        if let sec = remainingSeconds, sec > 4 {
             let fastSleep = Double(sec - 2)
             print("⏳ 广告剩余 \(sec) 秒，快进等待 \(Int(fastSleep)) 秒后抢关...")
             watcherControl.wait(seconds: fastSleep)
@@ -453,8 +455,12 @@ while completedAds < maxAds && !watcherControl.isStopped {
     }
 
     // 7. 主界面触发下一个广告按钮 (优先识别底部操作按钮)
+    // 商品权益文案不是广告入口；购买页仅允许上面的奖励计时和关闭流程。
+    let isPaidOffer = ["立即购买", "立即支付", "确认支付", "自动续费", "连续包月", "连续包季", "连续包年"].contains {
+        compactAllText.contains($0)
+    }
     var triggerItem: OCRItem? = nil
-    for item in items {
+    for item in items where !isPaidOffer {
         let t = item.text
         let compactText = t.filter { !$0.isWhitespace }
         if compactText.contains("金币") { continue }
@@ -464,7 +470,7 @@ while completedAds < maxAds && !watcherControl.isStopped {
             break
         }
         if t.contains("提前得") || t.contains("已领取") || t.contains("回复") || t.contains("享第") || t.contains("条") { continue }
-        if t.contains("看1个视频") || t.contains("看视频") || (t.contains("看") && t.contains("视频")) || t.contains("点击观看") || t.contains("观看视频") || t.contains("提前领") || t.contains("再看一个") || t.contains("免费听") || t.contains("免广告") || t.contains("解锁") || (t == "福利" && item.box.origin.y < 0.15) {
+        if t.contains("看1个视频") || t.contains("看视频") || (t.contains("看") && t.contains("视频")) || t.contains("点击观看") || t.contains("观看视频") || t.contains("提前领") || t.contains("再看一个") || t.contains("免费听") || t.contains("解锁") || (t == "福利" && item.box.origin.y < 0.15) {
             triggerItem = item
             if item.box.origin.y < 0.35 { break }
         }
